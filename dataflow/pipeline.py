@@ -3,6 +3,7 @@ from apache_beam.options.pipeline_options import PipelineOptions, StandardOption
 import json
 import argparse
 from datetime import datetime
+from apache_beam import window
 
 class ParseMessageFn(beam.DoFn):
     def process(self, element):
@@ -38,10 +39,13 @@ def run():
         save_main_session=True
     )
 
-    with beam.Pipeline(options=pipeline_options) as p:
+    with beam.Pipeline(options=options) as p:
         messages = (
             p
-            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
+            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(
+                topic="projects/bct-project-465419/topics/stream-topic")
+            | "Window into fixed intervals" >> beam.WindowInto(
+                window.FixedWindows(60))  # 60-second windows
             | "Parse JSON" >> beam.ParDo(ParseMessageFn())
         )
 
