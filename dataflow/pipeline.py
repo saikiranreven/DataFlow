@@ -15,7 +15,6 @@ class ParseMessageFn(beam.DoFn):
             return
 
 def run():
-    # Define pipeline options
     parser = argparse.ArgumentParser()
     parser.add_argument('--project', default='bct-project-465419')
     parser.add_argument('--region', default='us-central1')
@@ -47,7 +46,6 @@ def run():
         messages = (
             p
             | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(topic=known_args.input_topic)
-            | "Window into intervals" >> beam.WindowInto(beam.window.FixedWindows(60))
             | "Parse JSON" >> beam.ParDo(ParseMessageFn())
         )
 
@@ -57,10 +55,12 @@ def run():
                 'fields': [
                     {'name': 'user_id', 'type': 'STRING'},
                     {'name': 'action', 'type': 'STRING'},
-                    {'name': 'timestamp', 'type': 'STRING'},
-                    {'name': 'ingest_time', 'type': 'STRING'}
+                    {'name': 'timestamp', 'type': 'TIMESTAMP'},
+                    {'name': 'ingest_time', 'type': 'TIMESTAMP'}
                 ]
-            }
+            },
+            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
         )
 
         messages | "Write to GCS" >> beam.io.WriteToText(
