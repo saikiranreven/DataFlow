@@ -1,0 +1,46 @@
+steps:
+  # 1. Terraform apply
+  - name: 'hashicorp/terraform:1.5.7'
+    args: ['init']
+    dir: 'terraform'
+
+  - name: 'hashicorp/terraform:1.5.7'
+    args: ['apply', '-auto-approve']
+    dir: 'terraform'
+
+  # 2. Deploy Dataflow pipeline (your exact parameters)
+  - name: 'python:3.9'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install apache-beam[gcp]==2.50.0 && \
+        python dataflow/pipeline.py \
+          --project=bct-project-465419 \
+          --region=us-central1 \
+          --input_topic=projects/bct-project-465419/topics/stream-topic \
+          --temp_location=gs://bct-project-465419-raw-backup/temp \
+          --staging_location=gs://bct-project-465419-raw-backup/staging \
+          --output_table=bct-project-465419:streaming_dataset.user_events \
+          --output_path=gs://bct-project-465419-raw-backup/raw/events \
+          --runner=DataflowRunner
+
+  # 3. Deploy publisher (your exact single-file version)
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/bct-project-465419/pubsub-publisher', './publisher']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args: 
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'pubsub-publisher'
+      - '--image=gcr.io/bct-project-465419/pubsub-publisher'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--no-allow-unauthenticated'
+      - '--max-instances=1'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
