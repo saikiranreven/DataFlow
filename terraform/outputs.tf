@@ -7,5 +7,5 @@ output "bucket_name" {
 }
 
 output "dataflow_service_account" {
-  value = google_service_account.dataflow_sa.email
+  value = "dataflow-ca@bct-project-465419.iam.gserviceaccount.com"
 }
