@@ -9,7 +9,8 @@ steps:
     dir: 'terraform'
 
   # 2. Deploy Dataflow pipeline (your exact parameters)
-  - name: 'python:3.9'
+  - id: 'deploy-dataflow'
+    name: 'python:3.9'
     entrypoint: 'bash'
     args:
       - '-c'

@@ -1,75 +1,71 @@
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
+from datetime import datetime, timezone
 import json
 import argparse
-from datetime import datetime
-from apache_beam import window
 
 class ParseMessageFn(beam.DoFn):
     def process(self, element):
         try:
-            record = json.loads(element.decode("utf-8"))
-            record['ingest_time'] = datetime.utcnow().isoformat()
+            record = json.loads(element.decode('utf-8'))
+            record['ingest_time'] = datetime.now(timezone.utc).isoformat()
             yield record
         except Exception as e:
-            print(f"Parsing error: {e}")
+            print(f"Error parsing message: {e}")
             return
 
 def run():
+    # Define pipeline options
     parser = argparse.ArgumentParser()
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--region', required=True)
-    parser.add_argument('--input_topic', required=True)
-    parser.add_argument('--temp_location', required=True)
-    parser.add_argument('--staging_location', required=True)
-    parser.add_argument('--output_table', required=True)
-    parser.add_argument('--output_path', required=True)
+    parser.add_argument('--project', default='bct-project-465419')
+    parser.add_argument('--region', default='us-central1')
+    parser.add_argument('--input_topic', 
+                      default='projects/bct-project-465419/topics/stream-topic')
+    parser.add_argument('--temp_location',
+                      default='gs://bct-project-465419-raw-backup/temp')
+    parser.add_argument('--staging_location',
+                      default='gs://bct-project-465419-raw-backup/staging')
+    parser.add_argument('--output_table',
+                      default='bct-project-465419:streaming_dataset.user_events')
+    parser.add_argument('--output_path',
+                      default='gs://bct-project-465419-raw-backup/raw/events')
     parser.add_argument('--runner', default='DataflowRunner')
-
-    args, beam_args = parser.parse_known_args()
-
-    pipeline_options = PipelineOptions(
-        beam_args,
-        project=args.project,
-        region=args.region,
-        temp_location=args.temp_location,
-        staging_location=args.staging_location,
-        runner=args.runner,
-        streaming=True,
-        save_main_session=True
+    
+    known_args, pipeline_args = parser.parse_known_args()
+    
+    options = PipelineOptions(
+        pipeline_args,
+        project=known_args.project,
+        region=known_args.region,
+        temp_location=known_args.temp_location,
+        staging_location=known_args.staging_location,
+        runner=known_args.runner
     )
+    options.view_as(StandardOptions).streaming = True
 
     with beam.Pipeline(options=options) as p:
         messages = (
             p
-            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(
-                topic="projects/bct-project-465419/topics/stream-topic")
-            | "Window into fixed intervals" >> beam.WindowInto(
-                window.FixedWindows(60))  # 60-second windows
+            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(topic=known_args.input_topic)
+            | "Window into intervals" >> beam.WindowInto(beam.window.FixedWindows(60))
             | "Parse JSON" >> beam.ParDo(ParseMessageFn())
         )
 
-        # Write to BigQuery
-        messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-            args.output_table,
-            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
-            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            custom_gcs_temp_location=args.temp_location,
+        messages | "Write to BQ" >> beam.io.WriteToBigQuery(
+            known_args.output_table,
             schema={
-                "fields": [
-                    {"name": "user_id", "type": "STRING"},
-                    {"name": "action", "type": "STRING"},
-                    {"name": "timestamp", "type": "STRING"},
-                    {"name": "ingest_time", "type": "STRING"}
+                'fields': [
+                    {'name': 'user_id', 'type': 'STRING'},
+                    {'name': 'action', 'type': 'STRING'},
+                    {'name': 'timestamp', 'type': 'STRING'},
+                    {'name': 'ingest_time', 'type': 'STRING'}
                 ]
             }
         )
 
-        # Archive raw messages
         messages | "Write to GCS" >> beam.io.WriteToText(
-            file_path_prefix=args.output_path,
-            file_name_suffix=".json",
-            num_shards=1
+            known_args.output_path,
+            file_name_suffix='.json'
         )
 
 if __name__ == '__main__':
