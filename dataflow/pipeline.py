@@ -3,32 +3,38 @@ from apache_beam.options.pipeline_options import PipelineOptions
 from datetime import datetime, timezone
 import json
 
+class ParseMessage(beam.DoFn):
+    def process(self, element):
+        record = json.loads(element.decode('utf-8'))
+        yield {
+            'user_id': record.get('user_id'),
+            'action': record.get('action'),
+            'timestamp': datetime.utcnow().isoformat(),
+            'ingest_time': datetime.utcnow().isoformat()
+        }
+
 def run():
     options = PipelineOptions(
         project="bct-project-465419",
         region="us-central1",
+        runner="DataflowRunner",
         temp_location="gs://bct-project-465419-raw-backup/temp",
         staging_location="gs://bct-project-465419-raw-backup/staging",
-        runner="DataflowRunner",
         streaming=True,
         save_main_session=True
     )
 
     with beam.Pipeline(options=options) as p:
-        parsed = (
+        parsed_messages = (
             p
             | "Read from PubSub" >> beam.io.ReadFromPubSub(
                 topic="projects/bct-project-465419/topics/stream-topic")
-            | "Parse JSON" >> beam.Map(lambda x: {
-                'user_id': json.loads(x.decode('utf-8')).get('user_id'),
-                'action': json.loads(x.decode('utf-8')).get('action'),
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                'ingest_time': datetime.now(timezone.utc).isoformat()
-            })
-            | "Window into 1-min" >> beam.WindowInto(beam.window.FixedWindows(60))
+            | "Parse JSON" >> beam.ParDo(ParseMessage())
+            | "Apply Fixed 1-min Window" >> beam.WindowInto(
+                beam.window.FixedWindows(60))
         )
 
-        parsed | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+        parsed_messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             "bct-project-465419:streaming_dataset.user_events",
             schema={
                 'fields': [
@@ -43,10 +49,9 @@ def run():
             custom_gcs_temp_location="gs://bct-project-465419-raw-backup/temp"
         )
 
-        parsed | "Write to GCS" >> beam.io.WriteToText(
+        parsed_messages | "Write to GCS" >> beam.io.WriteToText(
             "gs://bct-project-465419-raw-backup/raw/events",
-            file_name_suffix='.json',
-            num_shards=1
+            file_name_suffix=".json"
         )
 
 if __name__ == '__main__':
