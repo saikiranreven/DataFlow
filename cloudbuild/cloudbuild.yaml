@@ -1,6 +1,6 @@
 steps:
   # 1. Terraform infrastructure deployment
-  - id: 'terraform-apply'
+  - id: 'terraform-init'
     name: 'hashicorp/terraform:1.5.7'
     args: ['init']
     dir: 'terraform'
