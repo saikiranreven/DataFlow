@@ -1,5 +1,5 @@
 steps:
-  # 1. Terraform infrastructure deployment
+  # 1. Terraform infrastructure
   - id: 'terraform-init'
     name: 'hashicorp/terraform:1.5.7'
     args: ['init']
@@ -9,8 +9,9 @@ steps:
     name: 'hashicorp/terraform:1.5.7'
     args: ['apply', '-auto-approve']
     dir: 'terraform'
+    waitFor: ['terraform-init']
 
-  # 2. Deploy Dataflow pipeline (now step 2)
+  # 2. Dataflow pipeline (fixed version)
   - id: 'deploy-dataflow'
     name: 'python:3.10'
     entrypoint: 'bash'
@@ -30,7 +31,7 @@ steps:
           --streaming
     waitFor: ['terraform-apply']
 
-  # 3. Build and deploy Cloud Run service (now step 3)
+  # 3. Cloud Run deployment
   - id: 'build-publisher'
     name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/bct-project-465419/pubsub-publisher', './publisher']
@@ -46,9 +47,8 @@ steps:
       - '--image=gcr.io/bct-project-465419/pubsub-publisher'
       - '--platform=managed'
       - '--region=us-central1'
+      - '--service-account=dataflow-ca@bct-project-465419.iam.gserviceaccount.com'
       - '--no-allow-unauthenticated'
-      - '--memory=256Mi'
-      - '--cpu=1'
     waitFor: ['build-publisher']
 
 options:
