@@ -11,7 +11,42 @@ steps:
     dir: 'terraform'
     waitFor: ['terraform-init']
 
-  # 2. Dataflow pipeline (fixed version)
+  # 2. Build and push publisher image
+  - id: 'build-publisher'
+    name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher',
+      './publisher'
+    ]
+    waitFor: ['terraform-apply']
+
+  - id: 'push-publisher'
+    name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      'us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher'
+    ]
+    waitFor: ['build-publisher']
+
+  # 3. Deploy Cloud Run service
+  - id: 'deploy-publisher'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args: 
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'pubsub-publisher'
+      - '--image=us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher'
+      - '--platform=managed'
+      - '--region=us-central1'
+      - '--service-account=dataflow-ca@bct-project-465419.iam.gserviceaccount.com'
+      - '--no-allow-unauthenticated'
+      - '--memory=256Mi'
+      - '--cpu=1'
+    waitFor: ['push-publisher']
+
+  # 4. Deploy Dataflow pipeline (after image is available)
   - id: 'deploy-dataflow'
     name: 'python:3.10'
     entrypoint: 'bash'
@@ -29,27 +64,7 @@ steps:
           --output_path=gs://bct-project-465419-raw-backup/raw/events \
           --runner=DataflowRunner \
           --streaming
-    waitFor: ['terraform-apply']
-
-  # 3. Cloud Run deployment
-  - id: 'build-publisher'
-    name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'gcr.io/bct-project-465419/pubsub-publisher', './publisher']
-    waitFor: ['terraform-apply']
-
-  - id: 'deploy-publisher'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    args: 
-      - 'gcloud'
-      - 'run'
-      - 'deploy'
-      - 'pubsub-publisher'
-      - '--image=gcr.io/bct-project-465419/pubsub-publisher'
-      - '--platform=managed'
-      - '--region=us-central1'
-      - '--service-account=dataflow-ca@bct-project-465419.iam.gserviceaccount.com'
-      - '--no-allow-unauthenticated'
-    waitFor: ['build-publisher']
+    waitFor: ['push-publisher']
 
 options:
   logging: CLOUD_LOGGING_ONLY
