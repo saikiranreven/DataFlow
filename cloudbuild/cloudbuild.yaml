@@ -1,20 +1,23 @@
 steps:
-  # 1. Terraform apply
-  - name: 'hashicorp/terraform:1.5.7'
+  # 1. Terraform infrastructure deployment
+  - id: 'terraform-apply'
+    name: 'hashicorp/terraform:1.5.7'
     args: ['init']
     dir: 'terraform'
 
-  - name: 'hashicorp/terraform:1.5.7'
+  - id: 'terraform-apply'
+    name: 'hashicorp/terraform:1.5.7'
     args: ['apply', '-auto-approve']
     dir: 'terraform'
 
-  # 2. Deploy Dataflow pipeline with compatible versions
-  - name: 'python:3.10'  # Updated Python version
+  # 2. Deploy Dataflow pipeline (now step 2)
+  - id: 'deploy-dataflow'
+    name: 'python:3.10'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        pip install apache-beam[gcp]==2.54.0  # Updated Beam version
+        pip install apache-beam[gcp]==2.54.0 && \
         python dataflow/pipeline.py \
           --project=bct-project-465419 \
           --region=us-central1 \
@@ -23,13 +26,18 @@ steps:
           --staging_location=gs://bct-project-465419-raw-backup/staging \
           --output_table=bct-project-465419:streaming_dataset.user_events \
           --output_path=gs://bct-project-465419-raw-backup/raw/events \
-          --runner=DataflowRunner
+          --runner=DataflowRunner \
+          --streaming
+    waitFor: ['terraform-apply']
 
-  # 3. Deploy publisher
-  - name: 'gcr.io/cloud-builders/docker'
+  # 3. Build and deploy Cloud Run service (now step 3)
+  - id: 'build-publisher'
+    name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/bct-project-465419/pubsub-publisher', './publisher']
+    waitFor: ['terraform-apply']
 
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  - id: 'deploy-publisher'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     args: 
       - 'gcloud'
       - 'run'
@@ -39,7 +47,9 @@ steps:
       - '--platform=managed'
       - '--region=us-central1'
       - '--no-allow-unauthenticated'
-      - '--max-instances=1'
+      - '--memory=256Mi'
+      - '--cpu=1'
+    waitFor: ['build-publisher']
 
 options:
   logging: CLOUD_LOGGING_ONLY
