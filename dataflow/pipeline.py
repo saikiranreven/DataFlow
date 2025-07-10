@@ -10,11 +10,12 @@ def run():
         temp_location="gs://bct-project-465419-raw-backup/temp",
         staging_location="gs://bct-project-465419-raw-backup/staging",
         runner="DataflowRunner",
-        streaming=True
+        streaming=True,
+        save_main_session=True
     )
 
     with beam.Pipeline(options=options) as p:
-        messages = (
+        parsed = (
             p
             | "Read from PubSub" >> beam.io.ReadFromPubSub(
                 topic="projects/bct-project-465419/topics/stream-topic")
@@ -24,14 +25,10 @@ def run():
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'ingest_time': datetime.now(timezone.utc).isoformat()
             })
+            | "Window into 1-min" >> beam.WindowInto(beam.window.FixedWindows(60))
         )
 
-        windowed_msgs = (
-            messages
-            | "Apply 1-min Window" >> beam.WindowInto(beam.window.FixedWindows(60))
-        )
-
-        windowed_msgs | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+        parsed | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             "bct-project-465419:streaming_dataset.user_events",
             schema={
                 'fields': [
@@ -42,12 +39,14 @@ def run():
                 ]
             },
             create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
+            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+            custom_gcs_temp_location="gs://bct-project-465419-raw-backup/temp"
         )
 
-        windowed_msgs | "Write to GCS" >> beam.io.WriteToText(
+        parsed | "Write to GCS" >> beam.io.WriteToText(
             "gs://bct-project-465419-raw-backup/raw/events",
-            file_name_suffix='.json'
+            file_name_suffix='.json',
+            num_shards=1
         )
 
 if __name__ == '__main__':
