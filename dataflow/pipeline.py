@@ -14,20 +14,23 @@ def run():
     )
 
     with beam.Pipeline(options=options) as p:
+        # Fixed: Added windowing to unbounded PCollection
         messages = (
             p
             | "Read from PubSub" >> beam.io.ReadFromPubSub(
                 topic="projects/bct-project-465419/topics/stream-topic")
+            | "Window into 1-min intervals" >> beam.WindowInto(
+                beam.window.FixedWindows(60))  # 60-second windows
             | "Parse JSON" >> beam.Map(lambda x: {
                 'user_id': json.loads(x.decode('utf-8')).get('user_id'),
                 'action': json.loads(x.decode('utf-8')).get('action'),
-                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'timestamp': json.loads(x.decode('utf-8')).get('timestamp'),
                 'ingest_time': datetime.now(timezone.utc).isoformat()
             })
         )
 
-        # Fixed: Don't chain the writes, assign them to unused variables
-        _ = messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+        # Write to BigQuery (no grouping needed)
+        _ = messages | "Write to BQ" >> beam.io.WriteToBigQuery(
             "bct-project-465419:streaming_dataset.user_events",
             schema={
                 'fields': [
@@ -36,9 +39,12 @@ def run():
                     {'name': 'timestamp', 'type': 'TIMESTAMP'},
                     {'name': 'ingest_time', 'type': 'TIMESTAMP'}
                 ]
-            }
+            },
+            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
         )
 
+        # Write to GCS (no grouping needed)
         _ = messages | "Write to GCS" >> beam.io.WriteToText(
             "gs://bct-project-465419-raw-backup/raw/events",
             file_name_suffix='.json'
