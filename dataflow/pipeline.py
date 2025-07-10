@@ -25,11 +25,13 @@ def run():
                 'ingest_time': datetime.now(timezone.utc).isoformat()
             })
         )
+
         windowed_msgs = (
             messages
             | "Apply 1-min Window" >> beam.WindowInto(beam.window.FixedWindows(60))
         )
-        messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+
+        windowed_msgs | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             "bct-project-465419:streaming_dataset.user_events",
             schema={
                 'fields': [
@@ -42,6 +44,7 @@ def run():
             create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
             write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
         )
+
         windowed_msgs | "Write to GCS" >> beam.io.WriteToText(
             "gs://bct-project-465419-raw-backup/raw/events",
             file_name_suffix='.json'
