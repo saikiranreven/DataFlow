@@ -58,10 +58,7 @@ steps:
           --input_topic=projects/bct-project-465419/topics/stream-topic \
           --temp_location=gs://bct-project-465419-raw-backup/temp \
           --staging_location=gs://bct-project-465419-raw-backup/staging \
-          --output_table=bct-project-465419:streaming_dataset.user_events \
-          --output_path=gs://bct-project-465419-raw-backup/raw/events \
-          --runner=DataflowRunner \
-          --streaming
+          --runner=DataflowRunner
     waitFor: ['push-publisher']
 
 options:
