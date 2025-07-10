@@ -1,5 +1,5 @@
 steps:
-  # 1. Terraform infrastructure
+  # 1. Terraform Infrastructure
   - id: 'terraform-init'
     name: 'hashicorp/terraform:1.5.7'
     args: ['init']
@@ -11,26 +11,29 @@ steps:
     dir: 'terraform'
     waitFor: ['terraform-init']
 
-  # 2. Build and push to Container Registry (GCR)
+  # 2. Build Publisher Docker Image
   - id: 'build-publisher'
     name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'build',
-      '-t', 'gcr.io/bct-project-465419/pubsub-publisher',
-      '-f', 'publisher/Dockerfile',
-      'publisher/'
-    ]
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/bct-project-465419/pubsub-publisher'
+      - '-f'
+      - 'publisher/Dockerfile'
+      - 'publisher/'
     waitFor: ['terraform-apply']
 
   - id: 'push-publisher'
     name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/bct-project-465419/pubsub-publisher']
+    args:
+      - 'push'
+      - 'gcr.io/bct-project-465419/pubsub-publisher'
     waitFor: ['build-publisher']
 
-  # 3. Deploy Cloud Run service
+  # 3. Deploy Publisher to Cloud Run
   - id: 'deploy-publisher'
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    args: 
+    args:
       - 'gcloud'
       - 'run'
       - 'deploy'
@@ -44,22 +47,24 @@ steps:
       - '--cpu=1'
     waitFor: ['push-publisher']
 
-  # 4. Deploy Dataflow pipeline
+  # 4. Deploy Dataflow Job
   - id: 'deploy-dataflow'
     name: 'python:3.10'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        pip install apache-beam[gcp]==2.54.0 && \
+        set -e
+        pip install apache-beam[gcp]==2.54.0
         python dataflow/pipeline.py \
           --project=bct-project-465419 \
           --region=us-central1 \
+          --runner=DataflowRunner \
           --input_topic=projects/bct-project-465419/topics/stream-topic \
+          --output_table=bct-project-465419:streaming_dataset.user_events \
+          --output_path=gs://bct-project-465419-raw-backup/raw/events \
           --temp_location=gs://bct-project-465419-raw-backup/temp \
-          --staging_location=gs://bct-project-465419-raw-backup/staging \
-          --runner=DataflowRunner
-    waitFor: ['push-publisher']
+          --staging_location=gs://bct-project-465419-raw-backup/staging
 
 options:
   logging: CLOUD_LOGGING_ONLY

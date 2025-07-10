@@ -1,5 +1,5 @@
 import apache_beam as beam
-from apache_beam.options.pipeline_options import PipelineOptions
+from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
 from datetime import datetime
 import json
 
@@ -11,31 +11,29 @@ class ParseAndAnnotate(beam.DoFn):
             data['ingest_time'] = datetime.utcnow().isoformat()
             yield data
         except Exception as e:
-            print(f"Error parsing: {e}")
+            print(f"Parse error: {e}")
 
 def run():
-    options = PipelineOptions(
-        project="bct-project-465419",
-        region="us-central1",
-        runner="DataflowRunner",
-        streaming=True,
-        temp_location="gs://bct-project-465419-raw-backup/temp",
-        staging_location="gs://bct-project-465419-raw-backup/staging",
-        save_main_session=True
-    )
+    options = PipelineOptions()
+    options.view_as(StandardOptions).streaming = True
+
+    # Pull values from pipeline arguments
+    args = options.view_as(PipelineOptions)
+    input_topic = args.get_all_options().get("input_topic")
+    output_table = args.get_all_options().get("output_table")
+    gcs_path_prefix = args.get_all_options().get("output_path")
+    gcs_temp_location = args.get_all_options().get("temp_location")
 
     with beam.Pipeline(options=options) as p:
         events = (
             p
-            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(
-                topic="projects/bct-project-465419/topics/stream-topic")
-            | "Parse JSON" >> beam.ParDo(ParseAndAnnotate())
-            | "Apply Fixed Window" >> beam.WindowInto(
-                beam.window.FixedWindows(60))
+            | "Read from Pub/Sub" >> beam.io.ReadFromPubSub(topic=input_topic)
+            | "Parse and Annotate" >> beam.ParDo(ParseAndAnnotate())
+            | "Apply Fixed Window" >> beam.WindowInto(beam.window.FixedWindows(60))
         )
 
         events | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-            table="bct-project-465419:streaming_dataset.user_events",
+            output_table,
             schema={
                 "fields": [
                     {"name": "user_id", "type": "STRING"},
@@ -46,11 +44,11 @@ def run():
             },
             write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
             create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            custom_gcs_temp_location="gs://bct-project-465419-raw-backup/temp"
+            custom_gcs_temp_location=gcs_temp_location
         )
 
         events | "Write to GCS" >> beam.io.WriteToText(
-            file_path_prefix="gs://bct-project-465419-raw-backup/raw/events",
+            file_path_prefix=gcs_path_prefix,
             file_name_suffix=".json"
         )
 
