@@ -10,11 +10,10 @@ def run():
         temp_location="gs://bct-project-465419-raw-backup/temp",
         staging_location="gs://bct-project-465419-raw-backup/staging",
         runner="DataflowRunner",
-        streaming=True  # Explicit streaming mode
+        streaming=True
     )
 
     with beam.Pipeline(options=options) as p:
-        # Simple linear pipeline with no grouping
         messages = (
             p
             | "Read from PubSub" >> beam.io.ReadFromPubSub(
@@ -26,8 +25,10 @@ def run():
                 'ingest_time': datetime.now(timezone.utc).isoformat()
             })
         )
-
-        # Independent writes (no chaining)
+        windowed_msgs = (
+            messages
+            | "Apply 1-min Window" >> beam.WindowInto(beam.window.FixedWindows(60))
+        )
         messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             "bct-project-465419:streaming_dataset.user_events",
             schema={
@@ -41,8 +42,7 @@ def run():
             create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
             write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
         )
-
-        messages | "Write to GCS" >> beam.io.WriteToText(
+        windowed_msgs | "Write to GCS" >> beam.io.WriteToText(
             "gs://bct-project-465419-raw-backup/raw/events",
             file_name_suffix='.json'
         )
