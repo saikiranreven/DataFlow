@@ -39,7 +39,7 @@ steps:
       - '--platform=managed'
       - '--region=us-central1'
       - '--service-account=dataflow-ca@bct-project-465419.iam.gserviceaccount.com'
-      - '--no-allow-unauthenticated'
+      - '--allow-unauthenticated'
       - '--memory=256Mi'
       - '--cpu=1'
     waitFor: ['push-publisher']
