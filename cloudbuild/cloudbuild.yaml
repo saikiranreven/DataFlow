@@ -11,22 +11,20 @@ steps:
     dir: 'terraform'
     waitFor: ['terraform-init']
 
-  # 2. Build and push publisher image
+  # 2. Build and push to Container Registry (GCR)
   - id: 'build-publisher'
     name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
-      '-t', 'us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher',
-      './publisher'
+      '-t', 'gcr.io/bct-project-465419/pubsub-publisher',
+      '-f', 'publisher/Dockerfile',
+      'publisher/'
     ]
     waitFor: ['terraform-apply']
 
   - id: 'push-publisher'
     name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'push',
-      'us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher'
-    ]
+    args: ['push', 'gcr.io/bct-project-465419/pubsub-publisher']
     waitFor: ['build-publisher']
 
   # 3. Deploy Cloud Run service
@@ -37,7 +35,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'pubsub-publisher'
-      - '--image=us-central1-docker.pkg.dev/bct-project-465419/cloud-run-source-deploy/pubsub-publisher'
+      - '--image=gcr.io/bct-project-465419/pubsub-publisher'
       - '--platform=managed'
       - '--region=us-central1'
       - '--service-account=dataflow-ca@bct-project-465419.iam.gserviceaccount.com'
@@ -46,7 +44,7 @@ steps:
       - '--cpu=1'
     waitFor: ['push-publisher']
 
-  # 4. Deploy Dataflow pipeline (after image is available)
+  # 4. Deploy Dataflow pipeline
   - id: 'deploy-dataflow'
     name: 'python:3.10'
     entrypoint: 'bash'
