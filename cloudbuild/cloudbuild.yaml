@@ -8,14 +8,13 @@ steps:
     args: ['apply', '-auto-approve']
     dir: 'terraform'
 
-  # 2. Deploy Dataflow pipeline (your exact parameters)
-  - id: 'deploy-dataflow'
-    name: 'python:3.9'
+  # 2. Deploy Dataflow pipeline with compatible versions
+  - name: 'python:3.10'  # Updated Python version
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        pip install apache-beam[gcp]==2.50.0 && \
+        pip install apache-beam[gcp]==2.54.0  # Updated Beam version
         python dataflow/pipeline.py \
           --project=bct-project-465419 \
           --region=us-central1 \
@@ -26,7 +25,7 @@ steps:
           --output_path=gs://bct-project-465419-raw-backup/raw/events \
           --runner=DataflowRunner
 
-  # 3. Deploy publisher (your exact single-file version)
+  # 3. Deploy publisher
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/bct-project-465419/pubsub-publisher', './publisher']
 
