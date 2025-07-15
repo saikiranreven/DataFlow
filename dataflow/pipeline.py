@@ -1,24 +1,18 @@
-# minimal_pipeline.py
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 import json
 
 def run():
     options = PipelineOptions(
-        runner='DataflowRunner',
-        project='your-project-id',
-        region='us-central1',
-        temp_location='gs://your-project-id-raw-backup/temp',
-        staging_location='gs://your-project-id-raw-backup/staging'
+        streaming=True,
+        save_main_session=True
     )
 
     with beam.Pipeline(options=options) as p:
         (p
-         | 'ReadFromPubSub' >> beam.io.ReadFromPubSub(
-             topic='projects/your-project-id/topics/stream-topic')
-         | 'WriteToGCS' >> beam.io.WriteToText(
-             'gs://your-project-id-raw-backup/raw/events',
-             file_name_suffix='.json')
+         | beam.io.ReadFromPubSub(topic='projects/YOUR_PROJECT/topics/stream-topic')
+         | beam.Map(lambda x: json.loads(x.decode('utf-8')))
+         | beam.io.WriteToText('gs://YOUR_BUCKET/raw/events')
         )
 
 if __name__ == '__main__':
