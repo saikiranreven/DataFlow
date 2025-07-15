@@ -1,5 +1,7 @@
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions, GoogleCloudOptions, StandardOptions
+from apache_beam.metrics import Metrics
+from apache_beam.metrics.metric import MetricsFilter
 from datetime import datetime, timezone
 import argparse
 import json
@@ -46,6 +48,7 @@ def run():
             | "Parse JSON" >> beam.ParDo(ParseMessageFn())
         )
 
+        # BigQuery Write
         messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             args.output_table,
             schema={
@@ -61,17 +64,20 @@ def run():
             custom_gcs_temp_location=args.temp_location
         )
 
+        # GCS Write
         messages | "Write to GCS" >> beam.io.WriteToText(
             file_path_prefix=args.output_path,
             file_name_suffix=".json",
             num_shards=1
         )
 
-        result = p.run()
-        if hasattr(result, 'metrics'):
-            query_result = result.metrics().query(MetricsFilter())
-            for counter in query_result['counters']:
-                logging.info(f"Counter {counter.key.metric.name}: {counter.result}")
+    # Metrics reporting moved outside the pipeline context
+    result = p.run()
+    if hasattr(result, 'metrics'):
+        query_result = result.metrics().query(MetricsFilter())
+        for counter in query_result['counters']:
+            logging.info(f"Counter {counter.key.metric.name}: {counter.result}")
 
 if __name__ == "__main__":
+    logging.getLogger().setLevel(logging.INFO)
     run()
