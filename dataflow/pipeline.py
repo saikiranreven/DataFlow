@@ -38,10 +38,9 @@ def run():
     streaming_options.streaming = True
 
     with beam.Pipeline(options=options) as p:
-        (p
-        | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
-        | "Parse JSON" >> beam.ParDo(ParseMessageFn())
-        | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+        p | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
+        p | "Parse JSON" >> beam.ParDo(ParseMessageFn())
+        p | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             args.output_table,
             schema={
                 'fields': [
@@ -53,12 +52,12 @@ def run():
          },
          create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
          write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
-     )
-     | "Write to GCS" >> beam.io.WriteToText(
+      )
+        p | "Write to GCS" >> beam.io.WriteToText(
          file_path_prefix=args.output_path,
          file_name_suffix=".json"
-     )
-    )
+      )
+    
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
