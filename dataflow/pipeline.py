@@ -38,16 +38,10 @@ def run():
     streaming_options.streaming = True
 
     with beam.Pipeline(options=options) as p:
-        messages = (
-            p
-            | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
-            | "Parse JSON" >> beam.ParDo(ParseMessageFn())
-            # Add windowing if you need to perform aggregations later
-            | "Window into fixed intervals" >> beam.WindowInto(FixedWindows(60))
-        )
-
-        # Write to BigQuery
-        messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
+        (p
+        | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
+        | "Parse JSON" >> beam.ParDo(ParseMessageFn())
+        | "Write to BigQuery" >> beam.io.WriteToBigQuery(
             args.output_table,
             schema={
                 'fields': [
@@ -56,16 +50,15 @@ def run():
                     {'name': 'timestamp', 'type': 'STRING'},
                     {'name': 'ingest_time', 'type': 'STRING'}
                 ]
-            },
-            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
-        )
-
-        # Write to GCS
-        messages | "Write to GCS" >> beam.io.WriteToText(
-            file_path_prefix=args.output_path,
-            file_name_suffix=".json"
-        )
+         },
+         create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+         write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
+     )
+     | "Write to GCS" >> beam.io.WriteToText(
+         file_path_prefix=args.output_path,
+         file_name_suffix=".json"
+     )
+    )
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
