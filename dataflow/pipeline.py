@@ -1,97 +1,105 @@
 import apache_beam as beam
-from apache_beam.options.pipeline_options import PipelineOptions, GoogleCloudOptions, StandardOptions
+from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
 from apache_beam.transforms.window import FixedWindows
-from apache_beam.transforms.trigger import AfterWatermark, AfterProcessingTime, AccumulationMode
+from apache_beam.transforms.trigger import AfterWatermark, AfterProcessingTime
 from datetime import datetime, timezone
 import argparse
 import json
 import logging
 
 class ParseMessageFn(beam.DoFn):
+    """Parse JSON messages and add processing metadata"""
     def process(self, element, window=beam.DoFn.WindowParam):
         try:
-            record = json.loads(element.decode("utf-8"))
-            record["ingest_time"] = datetime.now(timezone.utc).isoformat()
-            record["window_start"] = window.start.to_utc_datetime().isoformat()
+            record = json.loads(element.decode('utf-8'))
+            record['processing_time'] = datetime.now(timezone.utc).isoformat()
+            record['window_start'] = window.start.to_utc_datetime().isoformat()
             yield record
         except Exception as e:
-            logging.error(f"Error parsing message: {e}")
+            logging.error(f"Failed to parse message: {str(e)}")
+            raise
 
-def run():
+def format_grouped_data(group):
+    """Format grouped data for BigQuery output"""
+    user_id, actions = group
+    return {
+        'user_id': user_id,
+        'action_count': len(actions),
+        'actions': list(set(a['action'] for a in actions)),  # Distinct actions
+        'window_start': actions[0]['window_start'],
+        'processing_time': datetime.now(timezone.utc).isoformat()
+    }
+
+def run(argv=None):
+    """Main pipeline definition"""
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_topic', required=True)
-    parser.add_argument('--output_table', required=True)
-    parser.add_argument('--output_path', required=True)
-    parser.add_argument('--temp_location', required=True)
-    parser.add_argument('--staging_location', required=True)
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--region', required=True)
-    args, pipeline_args = parser.parse_known_args()
+    parser.add_argument('--input_topic', required=True,
+                      help='Input Pub/Sub topic in projects/<project>/topics/<topic> format')
+    parser.add_argument('--output_table', required=True,
+                      help='Output BigQuery table in project:dataset.table format')
+    parser.add_argument('--output_path', required=True,
+                      help='Output GCS path for raw messages (gs://bucket/path)')
+    parser.add_argument('--window_duration_sec', type=int, default=60,
+                      help='Window duration in seconds')
+    known_args, pipeline_args = parser.parse_known_args(argv)
 
+    # Set pipeline options
     options = PipelineOptions(pipeline_args)
-    google_options = options.view_as(GoogleCloudOptions)
-    google_options.project = args.project
-    google_options.region = args.region
-    google_options.temp_location = args.temp_location
-    google_options.staging_location = args.staging_location
-    
-    # Set streaming options
-    streaming_options = options.view_as(StandardOptions)
-    streaming_options.streaming = True
+    options.view_as(StandardOptions).streaming = True  # Critical for streaming
 
     with beam.Pipeline(options=options) as p:
-        # Read and window first
-        windowed_messages = (
-            p
-            | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
-            | "Window into fixed intervals" >> beam.WindowInto(
-                FixedWindows(60),  # 60-second windows
+        # 1. Read from Pub/Sub and immediately apply windowing
+        raw_messages = (
+            p 
+            | 'ReadFromPubSub' >> beam.io.ReadFromPubSub(topic=known_args.input_topic)
+            | 'ApplyWindowing' >> beam.WindowInto(
+                FixedWindows(known_args.window_duration_sec),
                 trigger=AfterWatermark(
-                    early=AfterProcessingTime(10),  # Early firing every 10 sec
-                    late=AfterProcessingTime(20)),  # Late firing every 20 sec
-                accumulation_mode=AccumulationMode.DISCARDING)
+                    early=AfterProcessingTime(10),  # Early results every 10s
+                    late=AfterProcessingTime(20)), # Late data allowance
+                accumulation_mode=beam.transforms.accumulation.DISCARDING)
         )
 
-        # Parse after windowing
+        # 2. Parse JSON messages
         parsed_messages = (
-            windowed_messages
-            | "Parse JSON" >> beam.ParDo(ParseMessageFn())
+            raw_messages
+            | 'ParseMessages' >> beam.ParDo(ParseMessageFn())
         )
 
-        # Grouping operation (only if needed)
+        # 3. Group by user_id (now safe because of windowing)
         grouped_data = (
             parsed_messages
-            | "Add key" >> beam.Map(lambda x: (x["user_id"], x))
-            | "Group by user" >> beam.GroupByKey()
-            | "Process groups" >> beam.Map(lambda x: {
-                "user_id": x[0],
-                "count": len(x[1]),
-                "actions": [r["action"] for r in x[1]],
-                "window_start": x[1][0]["window_start"]
-            })
+            | 'ExtractUserKey' >> beam.Map(lambda x: (x['user_id'], x))
+            | 'GroupByUser' >> beam.GroupByKey()
+            | 'FormatGroupedData' >> beam.Map(format_grouped_data)
         )
 
-        # Write to BigQuery
-        grouped_data | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-            args.output_table,
-            schema={
-                'fields': [
-                    {'name': 'user_id', 'type': 'STRING'},
-                    {'name': 'count', 'type': 'INTEGER'},
-                    {'name': 'actions', 'type': 'STRING', 'mode': 'REPEATED'},
-                    {'name': 'window_start', 'type': 'STRING'}
-                ]
-            },
-            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
+        # 4. Write to BigQuery
+        _ = (
+            grouped_data
+            | 'WriteToBigQuery' >> beam.io.WriteToBigQuery(
+                known_args.output_table,
+                schema='''
+                    user_id:STRING,
+                    action_count:INTEGER,
+                    actions:ARRAY<STRING>,
+                    window_start:STRING,
+                    processing_time:STRING
+                ''',
+                create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
+                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND)
         )
 
-        # Write raw messages to GCS (without grouping)
-        parsed_messages | "Write to GCS" >> beam.io.WriteToText(
-            file_path_prefix=args.output_path,
-            file_name_suffix=".json"
+        # 5. Write raw messages to GCS
+        _ = (
+            parsed_messages
+            | 'FormatForGCS' >> beam.Map(json.dumps)
+            | 'WriteToGCS' >> beam.io.WriteToText(
+                known_args.output_path,
+                file_name_suffix='.json',
+                num_shards=1)
         )
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     logging.getLogger().setLevel(logging.INFO)
     run()
