@@ -1,43 +1,33 @@
-# main.py
-from flask import Flask
-import threading
-import time
-import json
-import random
 from google.cloud import pubsub_v1
-from datetime import datetime, timezone
+import json, time, random
+import logging
 
-app = Flask(__name__)
-running = False  # prevent duplicate threads
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def publish_loop():
+def generate_message():
+    return {
+        "user_id": f"user_{random.randint(1,100)}",
+        "action": random.choice(["click", "purchase", "view", "login", "logout"]),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }
+
+def publish_messages(project_id, topic_name):
     publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path("bct-project-465419", "stream-topic")
-    actions = ["click", "purchase", "view"]
-
-    while True:
-        message = {
-            "user_id": f"user_{random.randint(1, 100)}",
-            "action": random.choice(actions),
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        publisher.publish(topic_path, json.dumps(message).encode("utf-8"))
-        print(f"Published: {message}")
-        time.sleep(40)
-
-@app.route("/")
-def health():
-    return "OK"
-
-@app.route("/start")
-def start():
-    global running
-    if not running:
-        thread = threading.Thread(target=publish_loop, daemon=True)
-        thread.start()
-        running = True
-        return "Publisher started"
-    return "Already running"
+    topic_path = publisher.topic_path(project_id, topic_name)
+    
+    try:
+        while True:
+            data = generate_message()
+            future = publisher.publish(topic_path, json.dumps(data).encode("utf-8"))
+            message_id = future.result()
+            logger.info(f"Published message {message_id}: {data}")
+            time.sleep(random.uniform(0.5, 2.5))
+    except KeyboardInterrupt:
+        logger.info("Publisher stopped")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    import os
+    project_id = os.getenv("PROJECT_ID", "bct-project-465419")
+    topic_name = os.getenv("TOPIC_NAME", "stream-topic")
+    publish_messages(project_id, topic_name)

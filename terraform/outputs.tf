@@ -6,6 +6,10 @@ output "bucket_name" {
   value = google_storage_bucket.raw_bucket.name
 }
 
-output "dataflow_service_account" {
-  value = "dataflow-ca@bct-project-465419.iam.gserviceaccount.com"
+output "bigquery_dataset" {
+  value = google_bigquery_dataset.streaming_dataset.dataset_id
+}
+
+output "bigquery_table" {
+  value = google_bigquery_table.user_events.table_id
 }
