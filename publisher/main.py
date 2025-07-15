@@ -1,36 +1,25 @@
-# publisher/main.py
-from fastapi import FastAPI
-import uvicorn
-from google.cloud import pubsub_v1
-import json, time, random, threading, os
+# minimal_pipeline.py
+import apache_beam as beam
+from apache_beam.options.pipeline_options import PipelineOptions
+import json
 
-app = FastAPI()
+def run():
+    options = PipelineOptions(
+        runner='DataflowRunner',
+        project='your-project-id',
+        region='us-central1',
+        temp_location='gs://your-project-id-raw-backup/temp',
+        staging_location='gs://your-project-id-raw-backup/staging'
+    )
 
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
+    with beam.Pipeline(options=options) as p:
+        (p
+         | 'ReadFromPubSub' >> beam.io.ReadFromPubSub(
+             topic='projects/your-project-id/topics/stream-topic')
+         | 'WriteToGCS' >> beam.io.WriteToText(
+             'gs://your-project-id-raw-backup/raw/events',
+             file_name_suffix='.json')
+        )
 
-def generate_message():
-    return {
-        "user_id": f"user_{random.randint(1,100)}",
-        "action": random.choice(["click", "purchase", "view", "login", "logout"]),
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    }
-
-def publish_messages():
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(os.getenv("PROJECT_ID"), os.getenv("TOPIC_NAME"))
-    
-    while True:
-        data = generate_message()
-        future = publisher.publish(topic_path, json.dumps(data).encode("utf-8"))
-        message_id = future.result()
-        print(f"Published message {message_id}: {data}")
-        time.sleep(random.uniform(0.5, 2.5))
-
-if __name__ == "__main__":
-    # Start publisher thread
-    threading.Thread(target=publish_messages, daemon=True).start()
-    
-    # Start HTTP server
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+if __name__ == '__main__':
+    run()
