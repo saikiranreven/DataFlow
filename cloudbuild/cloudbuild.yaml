@@ -1,69 +1,61 @@
-# dataflow/pipeline.py
-import apache_beam as beam
-from apache_beam.options.pipeline_options import PipelineOptions, GoogleCloudOptions, StandardOptions
-from datetime import datetime, timezone
-import argparse
-import json
+steps:
+  - id: 'terraform-init'
+    name: 'hashicorp/terraform:1.5.7'
+    args: ['init']
+    dir: 'terraform'
 
+  - id: 'terraform-apply'
+    name: 'hashicorp/terraform:1.5.7'
+    args: ['apply', '-auto-approve']
+    dir: 'terraform'
+    waitFor: ['terraform-init']
 
-class ParseMessageFn(beam.DoFn):
-    def process(self, element):
-        try:
-            record = json.loads(element.decode("utf-8"))
-            record["ingest_time"] = datetime.now(timezone.utc).isoformat()
-            yield record
-        except Exception as e:
-            print(f"Error parsing message: {e}")
+  - id: 'build-publisher'
+    name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/pubsub-publisher',
+      '-f', 'publisher/Dockerfile',
+      'publisher/'
+    ]
+    waitFor: ['terraform-apply']
 
+  - id: 'push-publisher'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/pubsub-publisher']
+    waitFor: ['build-publisher']
 
-def run():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--input_topic', required=True)
-    parser.add_argument('--output_table', required=True)
-    parser.add_argument('--output_path', required=True)
-    parser.add_argument('--temp_location', required=True)
-    parser.add_argument('--staging_location', required=True)
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--region', required=True)
-    args, pipeline_args = parser.parse_known_args()
+  - id: 'deploy-publisher'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run deploy pubsub-publisher \
+          --image=gcr.io/$PROJECT_ID/pubsub-publisher \
+          --region=us-central1 \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --set-env-vars="PROJECT_ID=$PROJECT_ID,TOPIC_NAME=stream-topic"
+    waitFor: ['push-publisher']
 
-    options = PipelineOptions(pipeline_args)
-    google_options = options.view_as(GoogleCloudOptions)
-    google_options.project = args.project
-    google_options.region = args.region
-    google_options.temp_location = args.temp_location
-    google_options.staging_location = args.staging_location
+  - id: 'deploy-dataflow'
+    name: 'python:3.10'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        pip install apache-beam[gcp]==2.54.0
+        python dataflow/pipeline.py \
+          --project=$PROJECT_ID \
+          --region=us-central1 \
+          --input_topic=projects/$PROJECT_ID/topics/stream-topic \
+          --output_table=$PROJECT_ID:streaming_dataset.user_events \
+          --output_path=gs://$PROJECT_ID-raw-backup/raw/events \
+          --temp_location=gs://$PROJECT_ID-raw-backup/temp \
+          --staging_location=gs://$PROJECT_ID-raw-backup/staging
 
-    options.view_as(StandardOptions).streaming = True
-
-    with beam.Pipeline(options=options) as p:
-        messages = (
-            p
-            | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
-            | "Parse JSON" >> beam.ParDo(ParseMessageFn())
-        )
-
-        messages | "Write to BigQuery" >> beam.io.WriteToBigQuery(
-            args.output_table,
-            schema={
-                'fields': [
-                    {'name': 'user_id', 'type': 'STRING'},
-                    {'name': 'action', 'type': 'STRING'},
-                    {'name': 'timestamp', 'type': 'STRING'},
-                    {'name': 'ingest_time', 'type': 'STRING'}
-                ]
-            },
-            create_disposition=beam.io.BigQueryDisposition.CREATE_IF_NEEDED,
-            write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
-            custom_gcs_temp_location=args.temp_location
-        )
-
-        messages | "Write to GCS" >> beam.io.WriteToText(
-            file_path_prefix=args.output_path,
-            file_name_suffix=".json",
-            num_shards=1
-        )
-
-
-if __name__ == "__main__":
-    run()
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
