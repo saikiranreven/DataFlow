@@ -2,10 +2,12 @@ import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
 from apache_beam.transforms.window import FixedWindows
 from apache_beam.transforms.trigger import AfterWatermark, AfterProcessingTime
+from apache_beam.transforms import window
 from datetime import datetime, timezone
 import argparse
 import json
 import logging
+import os
 
 class ParseMessageFn(beam.DoFn):
     """Parse JSON messages and add processing metadata"""
@@ -41,11 +43,17 @@ def run(argv=None):
                       help='Output GCS path for raw messages (gs://bucket/path)')
     parser.add_argument('--window_duration_sec', type=int, default=60,
                       help='Window duration in seconds')
+    parser.add_argument('--runner', default='DataflowRunner',
+                      help='Pipeline runner (DataflowRunner or DirectRunner)')
     known_args, pipeline_args = parser.parse_known_args(argv)
 
     # Set pipeline options
-    options = PipelineOptions(pipeline_args)
-    options.view_as(StandardOptions).streaming = True  # Critical for streaming
+    options = PipelineOptions(
+        pipeline_args,
+        runner=known_args.runner,
+        streaming=True,
+        save_main_session=True
+    )
 
     with beam.Pipeline(options=options) as p:
         # 1. Read from Pub/Sub and immediately apply windowing
@@ -56,8 +64,8 @@ def run(argv=None):
                 FixedWindows(known_args.window_duration_sec),
                 trigger=AfterWatermark(
                     early=AfterProcessingTime(10),  # Early results every 10s
-                    late=AfterProcessingTime(20)), # Late data allowance
-                accumulation_mode=beam.transforms.accumulation.DISCARDING)
+                    late=AfterProcessingTime(20)),  # Late data allowance
+                accumulation_mode=window.AccumulationMode.DISCARDING)
         )
 
         # 2. Parse JSON messages
@@ -96,8 +104,7 @@ def run(argv=None):
             | 'FormatForGCS' >> beam.Map(json.dumps)
             | 'WriteToGCS' >> beam.io.WriteToText(
                 known_args.output_path,
-                file_name_suffix='.json',
-                num_shards=1)
+                file_name_suffix='.json')
         )
 
 if __name__ == '__main__':
