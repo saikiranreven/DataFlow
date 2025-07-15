@@ -40,7 +40,8 @@ def run():
     streaming_options.streaming = True
 
     with beam.Pipeline(options=options) as p:
-        messages = (
+        # Read and window first
+        windowed_messages = (
             p
             | "Read from PubSub" >> beam.io.ReadFromPubSub(topic=args.input_topic)
             | "Window into fixed intervals" >> beam.WindowInto(
@@ -49,13 +50,18 @@ def run():
                     early=AfterProcessingTime(10),  # Early firing every 10 sec
                     late=AfterProcessingTime(20)),  # Late firing every 20 sec
                 accumulation_mode=AccumulationMode.DISCARDING)
+        )
+
+        # Parse after windowing
+        parsed_messages = (
+            windowed_messages
             | "Parse JSON" >> beam.ParDo(ParseMessageFn())
         )
 
-        # If you need GroupByKey or similar operations:
+        # Grouping operation (only if needed)
         grouped_data = (
-            messages
-            | "Extract keys" >> beam.Map(lambda x: (x["user_id"], x))
+            parsed_messages
+            | "Add key" >> beam.Map(lambda x: (x["user_id"], x))
             | "Group by user" >> beam.GroupByKey()
             | "Process groups" >> beam.Map(lambda x: {
                 "user_id": x[0],
@@ -80,8 +86,8 @@ def run():
             write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND
         )
 
-        # Write raw messages to GCS
-        messages | "Write to GCS" >> beam.io.WriteToText(
+        # Write raw messages to GCS (without grouping)
+        parsed_messages | "Write to GCS" >> beam.io.WriteToText(
             file_path_prefix=args.output_path,
             file_name_suffix=".json"
         )
