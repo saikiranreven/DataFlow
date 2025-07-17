@@ -39,18 +39,7 @@ steps:
           --set-env-vars="PROJECT_ID=$PROJECT_ID,TOPIC_NAME=stream-topic"
     waitFor: ['push-publisher']
 
-  - id: 'deploy-dataflow'
-    name: 'python:3.10'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        pip install apache-beam[gcp]==2.54.0
-        python dataflow/pipeline.py \
-          --runner=DataflowRunner \
-          --project=$PROJECT_ID \
-          --region=us-central1 \
-          --temp_location=gs://$PROJECT_ID-raw-backup/temp
+
 
 options:
   logging: CLOUD_LOGGING_ONLY
