@@ -15,6 +15,14 @@ resource "google_pubsub_topic" "stream_topic" {
   name = "stream-topic"
 }
 
+resource "google_pubsub_topic" "stream_topic_1" {
+  name = "stream-topic-1"  # Existing topic (rename your current resource)
+}
+
+resource "google_pubsub_topic" "stream_topic_2" {
+  name = "stream-topic-2"  # New topic
+}
+
 # Cloud Storage Bucket
 resource "google_storage_bucket" "raw_bucket" {
   name           = "${var.project_id}-raw-backup"

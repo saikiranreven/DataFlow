@@ -36,9 +36,7 @@ steps:
           --region=us-central1 \
           --platform=managed \
           --no-allow-unauthenticated \
-          --set-env-vars="PROJECT_ID=$PROJECT_ID,TOPIC_NAME=stream-topic"
-    waitFor: ['push-publisher']
-
+          --set-env-vars="PROJECT_ID=$PROJECT_ID,TOPIC_1=stream-topic-1,TOPIC_2=stream-topic-2"
 
 
 options:
